@@ -1,0 +1,152 @@
+version: "3.8"
+services:
+  userdb:
+    image: postgres:9.6
+    container_name: userdb
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: users
+    ports:
+      - "5432:5432"  
+    volumes:
+      - userdb-data:/var/lib/postgresql/data 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  proddb:
+    image: postgres:9.6
+    container_name: proddb
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: prods
+    ports:
+      - "5433:5432" 
+    volumes:
+      - proddb-data:/var/lib/postgresql/data 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orderdb:
+    image: postgres:9.6
+    container_name: orderdb
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orders
+    ports:
+      - "5434:5432"  
+    volumes:
+      - orderdb-data:/var/lib/postgresql/data  
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  user-service:
+    build: ./user-microservice
+    ports:
+      - "5000:5000" 
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@userdb:5432/users
+      RABBITMQ_URL: amqp://rabbitmq:5672
+    depends_on:
+      userdb:
+        condition: service_healthy
+    
+    command: >
+      sh -c "npx prisma migrate deploy && npm run dev"  # Apply migrations before running the app
+    env_file:
+      - ./user-microservice/.env
+
+  order-service:
+    build: ./order-microservice
+    ports:
+      - "7000:7000" 
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@orderdb:5432/orders
+      RABBITMQ_URL: amqp://rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      orderdb:
+        condition: service_healthy
+  
+    command: >
+      sh -c "npx prisma migrate deploy && npm run dev"  # Apply migrations before running the app
+    env_file:
+      - ./order-microservice/.env
+
+  product-service:
+    build: ./product-microservice
+    ports:
+      - "6000:6000" 
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@proddb:5432/prods
+      RABBITMQ_URL: amqp://rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proddb:
+        condition: service_healthy
+
+    command: >
+      sh -c "npx prisma migrate deploy && npm run dev"  # Apply migrations before running the app
+    env_file:
+      - ./product-microservice/.env
+
+  api-gateway-service:
+    build: ./API-gateway
+    ports:
+      - "4000:4000"
+
+  redis:
+    image: redis:alpine
+    container_name: redis_cache
+    ports:
+      - "6389:6379"
+    volumes:
+      - redis_data:/data     
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:  
+      test: ["CMD-SHELL", "rabbitmqctl await_startup"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prom-server:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/var/lib/prometheus/prometheus.yml
+
+volumes:
+  userdb-data:
+  proddb-data:
+  orderdb-data:
+  redis_data:
+  rabbitmq_data:
